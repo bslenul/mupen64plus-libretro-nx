@@ -256,7 +256,8 @@ SOURCES_C += $(LIBRETRO_DIR)/libretro.c \
 	$(LIBRETRO_COMM_DIR)/streams/file_stream.c \
 	$(LIBRETRO_COMM_DIR)/compat/fopen_utf8.c \
 	$(ROOT_DIR)/custom/mupen64plus-core/api/vidext_libretro.c \
-	$(LIBRETRO_COMM_DIR)/glsm/glsm.c
+	$(LIBRETRO_COMM_DIR)/glsm/glsm.c \
+	$(LIBRETRO_COMM_DIR)/file/retro_dirent.c
 
 
 SOURCES_CXX   += \

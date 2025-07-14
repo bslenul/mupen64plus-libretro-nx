@@ -1531,6 +1531,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
         "0"
     },
     {
+        CORE_NAME "-64dd-ipl",
+        "64DD IPL",
+        NULL,
+        "Select the 64DD IPL to use.",
+        NULL,
+        NULL,
+        {
+            {"auto", "Auto-detect"},
+            // The rest is filled in "libretro.c"
+            { NULL, NULL },
+        },
+        "auto"
+    },
+    {
         CORE_NAME "-astick-deadzone",
         "Analog Deadzone (percent)",
         NULL,

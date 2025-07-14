@@ -22,6 +22,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <compat/strl.h>
+#include <retro_dirent.h>
+#include <file/file_path.h>
 
 #include "libretro.h"
 #include "libretro_private.h"
@@ -67,9 +69,19 @@
 #define PRESCALE_HEIGHT 625
 #endif
 
-#define PATH_SIZE 2048
-
 #define ISHEXDEC ((codeLine[cursor]>='0') && (codeLine[cursor]<='9')) || ((codeLine[cursor]>='a') && (codeLine[cursor]<='f')) || ((codeLine[cursor]>='A') && (codeLine[cursor]<='F'))
+
+#define IPL_SIZE 4194304
+#define IPL_ID_OFFSET 0x3B
+IPLInfo ipl[] = {
+    { "NDDJ2", "Japan v1.2 (Retail)", { 0x4E, 0x44, 0x44, 0x4A, 0x02 }, NULL },
+    { "NDDJ1", "Japan v1.1 (Beta)",   { 0x4E, 0x44, 0x44, 0x4A, 0x01 }, NULL },
+    { "NDDE0", "USA (Prototype)",     { 0x4E, 0x44, 0x44, 0x45, 0x00 }, NULL },
+    { "NDXJ0", "Japan (Development)", { 0x4E, 0x44, 0x58, 0x4A, 0x00 }, NULL }
+};
+const int NUM_IPLS = sizeof(ipl) / sizeof(ipl[0]);
+
+char sysdir_path[PATH_SIZE] = {0};
 
 /* Forward declarations */
 void inputGetKeys_default_descriptor(void);
@@ -610,6 +622,80 @@ bool retro_load_game_special(unsigned game_type, const struct retro_game_info *i
 	 return result;
 }
 
+void fill_ipl_options(const char* filepath)
+{
+    FILE* file = fopen(filepath, "rb");
+    if (!file)
+        return;
+
+    unsigned char header[5];
+    if (fseek(file, IPL_ID_OFFSET, SEEK_SET) ||
+        fread(header, 1, 5, file) != 5)
+    {
+        fclose(file);
+        return;
+    }
+
+    fclose(file);
+
+    // Index 0 being used by the "Auto-detect" option, start at 1
+    static unsigned index = 1;
+    for (unsigned i = 0; i < NUM_IPLS; ++i)
+    {
+        if (memcmp(header, ipl[i].id, 5) == 0)
+        {
+            // Skip if we already scanned a similar IPL file
+            if (ipl[i].filename)
+                return;
+
+            ipl[i].filename = strdup(path_basename(filepath));
+
+            // Find the IPL core option and fill its values/labels
+            for (unsigned j = 0; option_defs_us[j].key != NULL; ++j)
+            {
+                if (!strcmp(option_defs_us[j].key, CORE_NAME "-64dd-ipl"))
+                {
+                    if (index < (RETRO_NUM_CORE_OPTION_VALUES_MAX - 1))
+                    {
+                        option_defs_us[j].values[index].value = ipl[i].filename;
+                        option_defs_us[j].values[index].label = ipl[i].description;
+                        ++index;
+                    }
+
+                    // Make sure the next (or last) array is NULL
+                    option_defs_us[j].values[index].value = NULL;
+                    option_defs_us[j].values[index].label = NULL;
+                    break;
+                }
+            }
+            return;
+        }
+    }
+}
+
+static void scan_system_dir(void)
+{
+    RDIR* dir = retro_opendir(sysdir_path);
+    if (!dir)
+        return;
+
+    char path[PATH_SIZE];
+    while (retro_readdir(dir))
+    {
+        if (retro_dirent_is_dir(dir, NULL))
+            continue;
+
+        int len = snprintf(path, sizeof(path), "%s%s", sysdir_path, retro_dirent_get_name(dir));
+        if (len >= sizeof(path))
+            continue;
+
+        if (path_get_size(path) == IPL_SIZE)
+            fill_ipl_options(path);
+    }
+
+    retro_closedir(dir);
+}
+
 void retro_set_environment(retro_environment_t cb)
 {
     environ_cb = cb;
@@ -645,7 +731,24 @@ void retro_set_environment(retro_environment_t cb)
 
     environ_cb(RETRO_ENVIRONMENT_SET_SUBSYSTEM_INFO, (void*)subsystems);
     environ_cb(RETRO_ENVIRONMENT_GET_CLEAR_ALL_THREAD_WAITS_CB, &environ_clear_thread_waits_cb);
-    
+
+    // retro_set_environment can run multiple times,
+    // so don't re-run if sysdir_path is already filled
+    if (!*sysdir_path)
+    {
+        const char* sys_pathname;
+        if (!environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &sys_pathname) || !sys_pathname)
+            sys_pathname = ".";
+        strncpy(sysdir_path, sys_pathname, PATH_SIZE);
+        fill_pathname_slash(sysdir_path, sizeof(sysdir_path));
+        pathname_make_slashes_portable(sysdir_path);
+        strcat(sysdir_path, "Mupen64plus/");
+        sysdir_path[PATH_SIZE - 1] = '\0';
+
+        // Search for 64DD IPL files
+        scan_system_dir();
+    }
+
     setup_variables();
 }
 
@@ -690,15 +793,8 @@ void copy_file(char * ininame, char * fileName)
 
 void retro_init(void)
 {
-    char* sys_pathname;
     wchar_t w_pathname[PATH_SIZE];
-    environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &sys_pathname);
-    char pathname[PATH_SIZE];
-    strncpy(pathname, sys_pathname, PATH_SIZE);
-    if (pathname[(strlen(pathname)-1)] != '/' && pathname[(strlen(pathname)-1)] != '\\')
-        strcat(pathname, "/");
-    strcat(pathname, "Mupen64plus/");
-    mbstowcs(w_pathname, pathname, PATH_SIZE);
+    mbstowcs(w_pathname, sysdir_path, PATH_SIZE);
     if (!osal_path_existsW(w_pathname) || !osal_is_directory(w_pathname))
         osal_mkdirp(w_pathname);
     copy_file(inifile, "mupen64plus.ini");
@@ -753,6 +849,13 @@ void retro_deinit(void)
     rdp_plugin_last[0] = '\0';
     CoreOptionCategoriesSupported = 0;
     CoreOptionUpdateDisplayCbSupported = 0;
+
+    // Free strdups from fill_ipl_options()
+    for (int i = 0; i < NUM_IPLS; ++i)
+    {
+        free(ipl[i].filename);
+        ipl[i].filename = NULL;
+    }
 }
 
 void update_controllers()

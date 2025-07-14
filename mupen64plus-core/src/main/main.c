@@ -937,6 +937,19 @@ static void open_eep_file(struct file_storage* storage)
     }
 }
 
+static bool ipl_exists(const char* shortname, char* pathname)
+{
+    for (int i = 0; i < NUM_IPLS; ++i)
+    {
+        if (!strcmp(ipl[i].shortname, shortname) && ipl[i].filename)
+        {
+            snprintf(pathname, PATH_SIZE, "%s%s", sysdir_path, ipl[i].filename);
+            return true;
+        }
+    }
+    return false;
+}
+
 static void load_dd_rom(uint8_t* rom, size_t* rom_size, uint8_t* disk_region)
 {
     /* set the DD rom region */
@@ -950,15 +963,51 @@ static void load_dd_rom(uint8_t* rom, size_t* rom_size, uint8_t* disk_region)
         ? NULL
         : g_media_loader.get_dd_rom(g_media_loader.cb_data);
 
-    char* sys_pathname;
-    environ_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &sys_pathname);
-    char* pathname = (char*)malloc(2048);
-    strncpy(pathname, sys_pathname, 2048 - 1);
-    if (pathname[(strlen(pathname)-1)] != '/' && pathname[(strlen(pathname)-1)] != '\\')
-        strcat(pathname, PATH_DEFAULT_SLASH());
-    strcat(pathname, "Mupen64plus");
-    strcat(pathname, PATH_DEFAULT_SLASH());
-    strcat(pathname, "IPL.n64");
+    char* pathname = (char*)malloc(PATH_SIZE);
+    if (!pathname)
+        return;
+
+    bool ipl_found = false;
+    struct retro_variable var;
+    var.key = CORE_NAME "-64dd-ipl";
+    var.value = NULL;
+    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
+    {
+        if (!strcmp(var.value, "auto") && *disk_region == DDREGION_JAPAN)
+        {
+            ipl_found = ipl_exists("NDDJ2", pathname) || ipl_exists("NDDJ1", pathname);
+        }
+        else if (!strcmp(var.value, "auto") && *disk_region == DDREGION_US)
+        {
+            ipl_found = ipl_exists("NDDE0", pathname);
+        }
+        else if (!strcmp(var.value, "auto") && *disk_region == DDREGION_DEV)
+        {
+            ipl_found = ipl_exists("NDXJ0", pathname);
+        }
+        else
+        {
+            ipl_found = true;
+            snprintf(pathname, PATH_SIZE, "%s%s", sysdir_path, var.value);
+        }
+    }
+    else
+    {
+        ipl_found = ipl_exists("NDDJ2", pathname) || ipl_exists("NDDJ1", pathname) ||
+                    ipl_exists("NDDE0", pathname) || ipl_exists("NDXJ0", pathname);
+    }
+
+    if (!ipl_found)
+    {
+        // No IPL file found in "<system_dir>/Mupen64plus/" so let's try
+        // the ParaLLEl core path as a fallback ("<system_dir>/64DD_IPL.bin")
+        char sysdir_path_parent[PATH_SIZE];
+        strncpy(sysdir_path_parent, sysdir_path, PATH_SIZE);
+        path_parent_dir(sysdir_path_parent, strlen(sysdir_path_parent));
+        snprintf(pathname, PATH_SIZE, "%s%s", sysdir_path_parent, "64DD_IPL.bin");
+        DebugMessage(M64MSG_INFO, "No valid 64DD IPL file found in \"%s\"", sysdir_path);
+        DebugMessage(M64MSG_INFO, "Checking for alternative path: \"%s\"", pathname);
+    }
 
     if(retro_dd_path_img)
     {

@@ -51,6 +51,20 @@ enum rsp_plugin_type
    RSP_PLUGIN_MAX
 };
 
+#define PATH_SIZE 2048
+
+typedef struct
+{
+    const char* shortname;
+    const char* description;
+    unsigned char id[5];
+    char* filename;
+} IPLInfo;
+
+extern IPLInfo ipl[];
+extern const int NUM_IPLS;
+extern char sysdir_path[PATH_SIZE];
+
 void plugin_connect_rsp_api(enum rsp_plugin_type type);
 void plugin_connect_rdp_api(enum rdp_plugin_type type);
 void plugin_connect_all();
